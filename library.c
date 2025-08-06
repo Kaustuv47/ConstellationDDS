@@ -202,3 +202,4 @@ void InitiateConstellation(DeserializerFunctionPointer deserializerFunctionPoint
     HANDLE threadHandler = (HANDLE)_beginthreadex(NULL, 0, Receiver, (void *)deserializerFunctionPointer, 0, NULL);
     if (threadHandler) CloseHandle(threadHandler);
 }
+
