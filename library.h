@@ -2,20 +2,38 @@
 #define CONSTELLATIONDDS_LIBRARY_H
 
 #include <winsock2.h>
-#include <Ws2tcpip.h>
+
+#define MAX_BUFFER_SIZE 65535
 
 typedef struct {
-    SOCKET socket;
-    struct sockaddr_in address;
-} clientInfoStructure;
+    struct sockaddr_in clientIPAddress;
+    int clientIPAddressLength;
+    int receivedDataLength;
+    char dataBuffer[MAX_BUFFER_SIZE];
+} ReceivedDataStructure;
 
-// Deserializer function pointer
-typedef void (*DeserializerFunctionPointer)(const char *data, int length, void *client_context);
+// ReceiverInterrupt function pointer
+typedef unsigned __stdcall (*_RECEIVER_INTERRUPT_FUNCTION)(void *);
+
+typedef struct {
+    int port;
+    _RECEIVER_INTERRUPT_FUNCTION _ReceiverInterruptFunction;
+} ReceiverConfigStructure;
+
+typedef struct {
+    const char *ipAddressPointer;
+    int port;
+    SOCKET transmitterSocket; // INVALID_SOCKET = not initialized
+    struct sockaddr_in destinationAddress; // Stores destination once built
+} TransmitterConfigStructure;
 
 // Transmit raw data to a specific IP (reuses connection)
-void Transmitter(const char *ip, const char *data, int length);
+void Transmitter(TransmitterConfigStructure *, char *, int);
 
 // Start the UDP listener in a separate thread
-void InitiateConstellation(DeserializerFunctionPointer deserializerFunctionPointer);
+void InitiateConstellation(ReceiverConfigStructure *);
+
+// Configure transmitter
+TransmitterConfigStructure CreateTransmitter(const char *ipAddressPointer, int port);
 
 #endif // CONSTELLATIONDDS_LIBRARY_H
