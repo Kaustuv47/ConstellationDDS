@@ -1,9 +1,17 @@
 #ifndef CONSTELLATIONDDS_LIBRARY_H
 #define CONSTELLATIONDDS_LIBRARY_H
 
-#include <winsock2.h>
-
 #define MAX_BUFFER_SIZE 65535
+
+#ifdef _WIN32
+#include <winsock2.h>
+typedef SOCKET socket_t;
+typedef unsigned __stdcall (*_RECEIVER_INTERRUPT_FUNCTION)(void *);
+#elif __linux__
+#include <sys/socket.h>
+typedef int socket_t;
+typedef void *(*_RECEIVER_INTERRUPT_FUNCTION)(void *);
+#endif
 
 typedef struct {
     struct sockaddr_in clientIPAddress;
@@ -11,9 +19,6 @@ typedef struct {
     int receivedDataLength;
     char dataBuffer[MAX_BUFFER_SIZE];
 } ReceivedDataStructure;
-
-// ReceiverInterrupt function pointer
-typedef unsigned __stdcall (*_RECEIVER_INTERRUPT_FUNCTION)(void *);
 
 typedef struct {
     int port;
@@ -23,7 +28,7 @@ typedef struct {
 typedef struct {
     const char *ipAddressPointer;
     int port;
-    SOCKET transmitterSocket; // INVALID_SOCKET = not initialized
+    socket_t transmitterSocket; // INVALID_TRANSMITTER_SOCKET = not initialized
     struct sockaddr_in destinationAddress; // Stores destination once built
 } TransmitterConfigStructure;
 
