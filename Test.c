@@ -5,7 +5,6 @@
 #include <Ws2tcpip.h>
 
 unsigned __stdcall ReceiverInterrupt(void *arg) {
-    printf("Received");
     ReceivedDataStructure *receivedDataStructure = (ReceivedDataStructure *) arg;
     char ip[INET_ADDRSTRLEN];
     inet_ntop(AF_INET, &(receivedDataStructure->clientIPAddress.sin_addr), ip, sizeof(ip));
@@ -33,8 +32,8 @@ int main() {
 
 
     while (1) {
-        Sleep(1000);
-        Transmitter(&transmitterConfigStructure[0], "Hello", sizeof("Hello"));
+        // Sleep(7000000);
+        // Transmitter(&transmitterConfigStructure[0], "Hello", sizeof("Hello"));
     }
 
     return 0;

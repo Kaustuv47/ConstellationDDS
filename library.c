@@ -45,7 +45,7 @@ unsigned __stdcall Receiver(void *arg) {
             receiverSocket,
             receivedDataStructure->dataBuffer,
             sizeof(receivedDataStructure->dataBuffer),
-            MSG_PEEK,
+            0, // -> Consider Zero if you want to remove packet from Socket
             (struct sockaddr *) &receivedDataStructure->clientIPAddress,
             &receivedDataStructure->clientIPAddressLength
         );
