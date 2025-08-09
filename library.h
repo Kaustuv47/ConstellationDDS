@@ -92,14 +92,20 @@ typedef struct {
     int port; /**< Destination port number */
     socket_t transmitterSocket; /**< UDP socket used for transmission */
     struct sockaddr_in destinationAddress; /**< Cached destination address struct */
+    bool multiCastSocket;
 } TransmitterConfigStructure;
 
 /**
- * @brief Starts the UDP listener thread.
+ * @brief Starts the UDP listener thread and joins specified multicast groups.
  *
  * @param ReceiverInterruptFunction Callback function invoked for each received UDP message.
+ * @param multiCastArray 2D array of multicast group IP strings (each max length MAX_IP_LENGTH).
+ *                       The array must be terminated by an empty string ("") to indicate end.
  */
-void InitiateConstellation(RECEIVER_INTERRUPT_FUNCTION ReceiverInterruptFunction);
+void InitiateConstellation(RECEIVER_INTERRUPT_FUNCTION ReceiverInterruptFunction,
+                          const char multiCastArray[][16]);
+
+
 
 /**
  * @brief Creates and configures a UDP transmitter.

@@ -41,8 +41,9 @@ void *ReceiverInterrupt(void *arg) {
 
 
 int main() {
+    char multiCastArray[16][16] = {{0}};  // empty, no multicast groups
     TransmitterConfigStructure transmitterConfigStructure = CreateTransmitter("127.0.0.1");
-    InitiateConstellation(RECEIVER_INTERRUPT_HANDLER);
+    InitiateConstellation(RECEIVER_INTERRUPT_HANDLER, nullptr);
     SleepForMs(2000);
 
     while (1) {

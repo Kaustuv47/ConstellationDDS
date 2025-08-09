@@ -1,5 +1,6 @@
 #include "library.h"
 
+#include <stdint.h>
 #include <stdio.h>
 
 #ifdef _WIN32
@@ -36,13 +37,18 @@ typedef pthread_t THREAD;
 #endif
 
 #define RECEIVER_PORT 47474
-#define TRANSMITTER_PORT 47474
+#define TRANSMITTER_PORT 47475
 #define MAX_ACTIVE_RECEIVER_THREAD 100
+
+#define MAX_MULTICAST_GROUPS 16
+#define MAX_IP_LENGTH 16
 
 typedef struct {
     HANDLE receiverThread;
     int activeReceivingThreads;
     volatile bool receiverThreadStatusActive;
+    int multiCastArrayLength;
+    char multiCastArray[MAX_MULTICAST_GROUPS][MAX_IP_LENGTH];
 } ReceiverConfigStructure;
 
 ReceiverConfigStructure receiverConfigStructure;
@@ -69,6 +75,27 @@ unsigned __stdcall Receiver(void *arg) {
         WSACleanup();
         return 0;
     }
+
+
+    for (int i = 0; i < receiverConfigStructure.multiCastArrayLength; i++) {
+        const char *multicastGroupIP = receiverConfigStructure.multiCastArray[i];
+            struct ip_mreq multicastRequest;
+            multicastRequest.imr_multiaddr.s_addr = inet_addr(multicastGroupIP);
+            multicastRequest.imr_interface.s_addr = INADDR_ANY; // Use default interface
+
+            if (setsockopt(receiverSocket, IPPROTO_IP, IP_ADD_MEMBERSHIP,
+                           (char *) &multicastRequest, sizeof(multicastRequest)) < 0) {
+#ifdef _WIN32
+                fprintf(stderr, "[Receiver] Failed to join multicast group %s\n", multicastGroupIP);
+#else
+                perror("[Receiver] Failed to join multicast group");
+#endif
+                closesocket(receiverSocket);
+                WSACleanup();
+                return 0;
+            }
+        }
+
 
     receiverConfigStructure.receiverThreadStatusActive = TRUE;
 
@@ -119,8 +146,25 @@ unsigned __stdcall Receiver(void *arg) {
     return 0;
 }
 
-void InitiateConstellation(RECEIVER_INTERRUPT_FUNCTION ReceiverInterruptFunction) {
+void InitiateConstellation(RECEIVER_INTERRUPT_FUNCTION ReceiverInterruptFunction,
+                           const char (*multiCastArray)[MAX_IP_LENGTH]) {
     receiverConfigStructure.activeReceivingThreads = MAX_ACTIVE_RECEIVER_THREAD;
+    receiverConfigStructure.multiCastArrayLength = 0;
+
+    if (multiCastArray == NULL) {
+        receiverConfigStructure.multiCastArrayLength = 0;
+    } else {
+        // Auto-detect length based on sentinel empty string
+        for (int i = 0; i < MAX_MULTICAST_GROUPS; i++) {
+            if (multiCastArray[i][0] == '\0') {
+                break;
+            }
+            strncpy(receiverConfigStructure.multiCastArray[i], multiCastArray[i], MAX_IP_LENGTH - 1);
+            receiverConfigStructure.multiCastArray[i][MAX_IP_LENGTH - 1] = '\0';
+            receiverConfigStructure.multiCastArrayLength++;
+        }
+    }
+
 #ifdef _WIN32
     receiverConfigStructure.receiverThread = (HANDLE) _beginthreadex(
         nullptr, 0, Receiver, (void *) ReceiverInterruptFunction, 0, nullptr);
@@ -159,7 +203,8 @@ TransmitterConfigStructure CreateTransmitter(const char *ipAddressPointer) {
         }
     }
 
-    TransmitterConfigStructure transmitterConfigStructure;
+    TransmitterConfigStructure transmitterConfigStructure = {nullptr};  // Zero initialize all fields
+
     transmitterConfigStructure.ipAddressPointer = ipAddressPointer;
     transmitterConfigStructure.port = TRANSMITTER_PORT;
     transmitterConfigStructure.transmitterSocket = INVALID_TRANSMITTER_SOCKET;
@@ -176,6 +221,7 @@ TransmitterConfigStructure CreateTransmitter(const char *ipAddressPointer) {
     if (inet_pton(AF_INET, transmitterConfigStructure.ipAddressPointer,
                   &transmitterConfigStructure.destinationAddress.sin_addr) != 1) {
         fprintf(stderr, "[CreateTransmitter] Invalid IP address: %s\n", transmitterConfigStructure.ipAddressPointer);
+
 #ifdef _WIN32
         closesocket(transmitterConfigStructure.transmitterSocket);
 #elif __linux__
@@ -184,6 +230,33 @@ TransmitterConfigStructure CreateTransmitter(const char *ipAddressPointer) {
 
         transmitterConfigStructure.transmitterSocket = INVALID_TRANSMITTER_SOCKET;
     }
+
+    // Optional: Check if the IP address is multicast (224.0.0.0 to 239.255.255.255)
+    if (transmitterConfigStructure.transmitterSocket != INVALID_TRANSMITTER_SOCKET) {
+        uint32_t ip_netorder = transmitterConfigStructure.destinationAddress.sin_addr.s_addr;
+        uint8_t first_octet = (uint8_t) ((ntohl(ip_netorder) >> 24) & 0xFF);
+
+        if (first_octet >= 224 && first_octet <= 239) {
+            int multicastTTL = 1; // Limit multicast packets to local subnet
+
+#ifdef _WIN32
+            if (setsockopt(transmitterConfigStructure.transmitterSocket, IPPROTO_IP, IP_MULTICAST_TTL,
+                           (const char *) &multicastTTL, sizeof(multicastTTL)) < 0) {
+                fprintf(stderr, "[CreateTransmitter] Failed to set multicast TTL\n");
+            }
+#else
+            if (setsockopt(transmitterConfigStructure.transmitterSocket, IPPROTO_IP, IP_MULTICAST_TTL,
+                           &multicastTTL, sizeof(multicastTTL)) < 0) {
+                perror("[CreateTransmitter] Failed to set multicast TTL");
+            }
+#endif
+        }
+        transmitterConfigStructure.multiCastSocket = TRUE;
+    }
+    else {
+        transmitterConfigStructure.multiCastSocket = FALSE;
+    }
+
     return transmitterConfigStructure;
 }
 
@@ -194,20 +267,21 @@ Status Transmitter(TransmitterConfigStructure *transmitterConfigStructure, const
     if (transmitterConfigStructure->transmitterSocket == INVALID_TRANSMITTER_SOCKET) {
         status = INVALID_SOCKET_ERROR;
     }
+    else {
+        int result = sendto(
+            transmitterConfigStructure->transmitterSocket,
+            dataBufferPointer,
+            dataBufferLength,
+            0,
+            (struct sockaddr *) &transmitterConfigStructure->destinationAddress,
+            sizeof(transmitterConfigStructure->destinationAddress)
+        );
 
-    int result = sendto(
-        transmitterConfigStructure->transmitterSocket,
-        dataBufferPointer,
-        dataBufferLength,
-        0,
-        (struct sockaddr *) &transmitterConfigStructure->destinationAddress,
-        sizeof(transmitterConfigStructure->destinationAddress)
-    );
-
-    if (result == SOCKET_ERROR) {
-        status = SENDTO_ERROR;
-    } else {
-        status = SUCCESS;
+        if (result == SOCKET_ERROR) {
+            status = SENDTO_ERROR;
+        } else {
+            status = SUCCESS;
+        }
     }
 
     return status;
