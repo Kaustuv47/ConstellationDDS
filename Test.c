@@ -4,7 +4,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <Ws2tcpip.h>
-#elif __linux__
+#else
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <stdlib.h>
@@ -23,8 +23,8 @@ unsigned __stdcall RECEIVER_INTERRUPT_HANDLER(void *arg) {
     EXIT_RECEIVER_INTERRUPT(receivedDataStructure);
     return 0;
 }
-#elif __linux__
-void *ReceiverInterrupt(void *arg) {
+#else
+void *RECEIVER_INTERRUPT_HANDLER(void *arg) {
     ReceivedDataStructure *receivedDataStructure = (ReceivedDataStructure *)arg;
     char ip[INET_ADDRSTRLEN];
     inet_ntop(AF_INET, &(receivedDataStructure->clientIPAddress.sin_addr), ip, sizeof(ip));
@@ -49,6 +49,5 @@ int main() {
         SleepForMs(1000);
         Transmitter(&transmitterConfigStructure, "From Org", sizeof("From Org"));
     }
-
     return 0;
 }

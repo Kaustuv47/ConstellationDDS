@@ -1,6 +1,8 @@
 #include "library.h"
 
 #include <stdio.h>
+#include <stdbool.h>
+
 
 #ifdef _WIN32
 #include <process.h>
@@ -11,7 +13,10 @@
 #define CLOSE_SOCKET closesocket
 #define INVALID_TRANSMITTER_SOCKET INVALID_SOCKET
 
-#elif __linux__
+#define True TRUE
+#define False FALSE
+
+#else
 
 #include <stdlib.h>
 #include <string.h>
@@ -27,6 +32,9 @@
 #define INVALID_TRANSMITTER_SOCKET -1
 #define SOCKET_ERROR -1
 
+#define True true
+#define False false
+
 typedef pthread_t THREAD;
 
 #endif
@@ -40,82 +48,89 @@ typedef pthread_t THREAD;
 #define MAX_ACTIVE_RECEIVER_THREAD 100
 
 typedef struct {
-    HANDLE receiverThread;
+    THREAD receiverThread;
     int activeReceivingThreads;
     volatile bool receiverThreadStatusActive;
 } ReceiverConfigStructure;
 
 ReceiverConfigStructure receiverConfigStructure;
 
-unsigned __stdcall Receiver(void *arg) {
-    RECEIVER_INTERRUPT_FUNCTION ReceiverInterruptFunction = (RECEIVER_INTERRUPT_FUNCTION) arg;
 
+#ifdef _WIN32
+unsigned __stdcall Receiver(void *arg) {
     WSADATA wsaData;
     if (WSAStartup(MAKEWORD(2, 2), &wsaData)) return 0;
-
-    SOCKET receiverSocket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (receiverSocket == INVALID_TRANSMITTER_SOCKET) {
-        WSACleanup();
-        return 0;
-    }
-
-    struct sockaddr_in receiverIPAddress = {0};
-    receiverIPAddress.sin_family = AF_INET;
-    receiverIPAddress.sin_port = htons(RECEIVER_PORT);
-    receiverIPAddress.sin_addr.s_addr = INADDR_ANY;
-
-    if (bind(receiverSocket, (struct sockaddr *) &receiverIPAddress, sizeof(receiverIPAddress)) == SOCKET_ERROR) {
-        closesocket(receiverSocket);
-        WSACleanup();
-        return 0;
-    }
-
-    receiverConfigStructure.receiverThreadStatusActive = TRUE;
-
-    while (receiverConfigStructure.receiverThreadStatusActive) {
-        ReceivedDataStructure *receivedDataStructure = malloc(sizeof(ReceivedDataStructure));
-        if (!receivedDataStructure) continue;
-
-        receivedDataStructure->clientIPAddressLength = sizeof(receivedDataStructure->clientIPAddress);
-
-        // Peek to get client address without removing the message
-        receivedDataStructure->receivedDataLength = recvfrom(
-            receiverSocket,
-            receivedDataStructure->dataBuffer,
-            sizeof(receivedDataStructure->dataBuffer),
-            0, // -> Consider Zero if you want to remove packet from Socket
-            (struct sockaddr *) &receivedDataStructure->clientIPAddress,
-            &receivedDataStructure->clientIPAddressLength
-        );
-
-        if (receivedDataStructure->receivedDataLength <= 0) {
-            free(receivedDataStructure);
-            continue;
-        }
-
-        if (receiverConfigStructure.activeReceivingThreads > 0) {
-#ifdef _WIN32
-            _beginthreadex(NULL, 0, ReceiverInterruptFunction, receivedDataStructure, 0, nullptr);
-#elif __linux__
-            pthread_t thread_id;
-            pthread_attr_t attr;
-            pthread_attr_init(&attr);
-            pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-            pthread_create(&thread_id, &attr, ReceiverInterruptFunction, receivedDataStructure);
-            pthread_attr_destroy(&attr);
+#else
+void *Receiver(void *arg) {
 #endif
-            receiverConfigStructure.activeReceivingThreads--;
-        } else {
-            free(receivedDataStructure);
-        }
+    RECEIVER_INTERRUPT_FUNCTION ReceiverInterruptFunction = (RECEIVER_INTERRUPT_FUNCTION) arg;
 
-        // Wait a little to avoid re-spawning for same client
-        Sleep(100);
+    Status status;
+
+    socket_t receiverSocket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (receiverSocket == INVALID_TRANSMITTER_SOCKET) {
+        status = FAILURE;
+    } else {
+        struct sockaddr_in receiverIPAddress = {0};
+        receiverIPAddress.sin_family = AF_INET;
+        receiverIPAddress.sin_port = htons(RECEIVER_PORT);
+        receiverIPAddress.sin_addr.s_addr = INADDR_ANY;
+
+        if (bind(receiverSocket, (struct sockaddr *) &receiverIPAddress, sizeof(receiverIPAddress)) == SOCKET_ERROR) {
+            status = FAILURE;
+        } else {
+            receiverConfigStructure.receiverThreadStatusActive = true;
+
+            while (receiverConfigStructure.receiverThreadStatusActive) {
+                ReceivedDataStructure *receivedDataStructure = malloc(sizeof(ReceivedDataStructure));
+                if (!receivedDataStructure) continue;
+
+                receivedDataStructure->clientIPAddressLength = sizeof(receivedDataStructure->clientIPAddress);
+
+                // Peek to get client address without removing the message
+                receivedDataStructure->receivedDataLength = recvfrom(
+                    receiverSocket,
+                    receivedDataStructure->dataBuffer,
+                    sizeof(receivedDataStructure->dataBuffer),
+                    0, // -> Consider Zero if you want to remove packet from Socket
+                    (struct sockaddr *) &receivedDataStructure->clientIPAddress,
+                    &receivedDataStructure->clientIPAddressLength
+                );
+
+                if (receivedDataStructure->receivedDataLength <= 0) {
+                    free(receivedDataStructure);
+                    continue;
+                }
+
+                if (receiverConfigStructure.activeReceivingThreads > 0) {
+#ifdef _WIN32
+                    _beginthreadex(NULL, 0, ReceiverInterruptFunction, receivedDataStructure, 0, nullptr);
+#else
+                    pthread_t thread_id;
+                    pthread_attr_t attr;
+                    pthread_attr_init(&attr);
+                    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+                    pthread_create(&thread_id, &attr, ReceiverInterruptFunction, receivedDataStructure);
+                    pthread_attr_destroy(&attr);
+#endif
+                    receiverConfigStructure.activeReceivingThreads--;
+                } else {
+                    free(receivedDataStructure);
+                }
+
+                // Wait a little to avoid re-spawning for same client
+                SleepForMs(100);
+            }
+        }
     }
 
-    // This line is technically unreachable
-    closesocket(receiverSocket);
+    if (receiverSocket != INVALID_TRANSMITTER_SOCKET) {
+        CLOSE_SOCKET(receiverSocket);
+        receiverSocket = INVALID_TRANSMITTER_SOCKET;
+    }
+#ifdef _WIN32
     WSACleanup();
+#endif
     return 0;
 }
 
@@ -125,11 +140,10 @@ void InitiateConstellation(RECEIVER_INTERRUPT_FUNCTION ReceiverInterruptFunction
     receiverConfigStructure.receiverThread = (HANDLE) _beginthreadex(
         nullptr, 0, Receiver, (void *) ReceiverInterruptFunction, 0, nullptr);
     if (receiverConfigStructure.receiverThread) CloseHandle(receiverConfigStructure.receiverThread);
-#elif __linux__
+#else
     int pthreadStatus = pthread_create(&receiverConfigStructure.receiverThread, NULL, Receiver,
                                        (void *) ReceiverInterruptFunction);
     if (pthreadStatus != 0) {
-        // pthread_create failed; handle error if you want
         receiverConfigStructure.receiverThread = 0; // or some invalid value to indicate failure
     }
 #endif
@@ -143,13 +157,14 @@ unsigned EXIT_RECEIVER_INTERRUPT(ReceivedDataStructure *receivedDataStructure) {
     receiverConfigStructure.activeReceivingThreads++;
 #ifdef _WIN32
     _endthreadex(0);
-#elif __linux__
+#else
     pthread_exit(NULL);
 #endif
 }
 
 TransmitterConfigStructure CreateTransmitter(const char *ipAddressPointer) {
     static int wsaStarted = 0;
+#ifdef _WIN32
     if (!wsaStarted) {
         WSADATA wsaData;
         if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
@@ -158,7 +173,9 @@ TransmitterConfigStructure CreateTransmitter(const char *ipAddressPointer) {
             wsaStarted = 1;
         }
     }
+#else
 
+#endif
     TransmitterConfigStructure transmitterConfigStructure;
     transmitterConfigStructure.ipAddressPointer = ipAddressPointer;
     transmitterConfigStructure.port = TRANSMITTER_PORT;
@@ -176,12 +193,7 @@ TransmitterConfigStructure CreateTransmitter(const char *ipAddressPointer) {
     if (inet_pton(AF_INET, transmitterConfigStructure.ipAddressPointer,
                   &transmitterConfigStructure.destinationAddress.sin_addr) != 1) {
         fprintf(stderr, "[CreateTransmitter] Invalid IP address: %s\n", transmitterConfigStructure.ipAddressPointer);
-#ifdef _WIN32
-        closesocket(transmitterConfigStructure.transmitterSocket);
-#elif __linux__
-        close(transmitterConfigStructure.transmitterSocket);
-#endif
-
+        CLOSE_SOCKET(transmitterConfigStructure.transmitterSocket);
         transmitterConfigStructure.transmitterSocket = INVALID_TRANSMITTER_SOCKET;
     }
     return transmitterConfigStructure;
@@ -223,18 +235,14 @@ void DestroyTransmitter(TransmitterConfigStructure *transmitterConfigStructure) 
 
 void DeInitiateConstellation() {
     // Example: Set a global flag to request thread exit (you need to implement it)
-    receiverConfigStructure.receiverThreadStatusActive = FALSE;
+    receiverConfigStructure.receiverThreadStatusActive = False;
     if (receiverConfigStructure.receiverThread) {
 #ifdef _WIN32
         WaitForSingleObject(receiverConfigStructure.receiverThread, INFINITE);
         CloseHandle(receiverConfigStructure.receiverThread);
-#elif __linux__
+#else
         pthread_join(receiverConfigStructure.receiverThread, NULL);
 #endif
         receiverConfigStructure.receiverThread = NULL;
     }
 }
-
-
-
-

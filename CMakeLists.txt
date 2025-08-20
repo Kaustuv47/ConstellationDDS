@@ -8,8 +8,14 @@ add_library(ConstellationDDS STATIC library.c
 
 add_executable(Test Test.c)
 
-target_link_libraries(Test
-        PRIVATE
-        ${CMAKE_SOURCE_DIR}/cmake-build-debug/libConstellationDDS.a
-        ws2_32
-)
+# Link against the static library
+target_link_libraries(Test PRIVATE ConstellationDDS)
+
+# Platform-specific libraries
+if (WIN32)
+    target_link_libraries(Test PRIVATE ws2_32)
+elseif (UNIX)
+    # On Linux, usually no extra libs needed, but if you use pthreads:
+    find_package(Threads REQUIRED)
+    target_link_libraries(Test PRIVATE Threads::Threads)
+endif()

@@ -18,7 +18,6 @@ typedef enum {
 } Status;
 
 #ifdef _WIN32
-
 #include <winsock2.h>
 
 /**
@@ -43,10 +42,9 @@ typedef unsigned __stdcall (*RECEIVER_INTERRUPT_FUNCTION)(void *);
  */
 #define SleepForMs(x) Sleep(x)
 
-#elif __linux__
+#else
 
-#include <sys/socket.h>
-
+#include <netinet/in.h>
 
 /**
  * @typedef socket_t
@@ -61,7 +59,7 @@ typedef int socket_t;
  * The callback function takes a pointer to received data and returns a thread exit code.
  * @return void * Thread exit pointer.
  */
-typedef void *(*_RECEIVER_INTERRUPT_FUNCTION)(void *);
+typedef void *(*RECEIVER_INTERRUPT_FUNCTION)(void *);
 
 /**
  * @def SleepForMs
