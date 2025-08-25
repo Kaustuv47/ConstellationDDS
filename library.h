@@ -97,7 +97,7 @@ typedef struct {
  *
  * @param ReceiverInterruptFunction Callback function invoked for each received UDP message.
  */
-void InitiateConstellation(RECEIVER_INTERRUPT_FUNCTION ReceiverInterruptFunction);
+void InitiateConstellation(RECEIVER_INTERRUPT_FUNCTION ReceiverInterruptFunction, int port);
 
 /**
  * @brief Creates and configures a UDP transmitter.
@@ -105,7 +105,7 @@ void InitiateConstellation(RECEIVER_INTERRUPT_FUNCTION ReceiverInterruptFunction
  * @param ipAddressPointer Destination IP address as a null-terminated string.
  * @return TransmitterConfigStructure Configured transmitter structure.
  */
-TransmitterConfigStructure CreateTransmitter(const char *ipAddressPointer);
+TransmitterConfigStructure CreateTransmitter(const char *ipAddressPointer, int port);
 
 /**
  * @brief Sends raw data to the configured destination IP and port.

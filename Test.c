@@ -41,8 +41,8 @@ void *RECEIVER_INTERRUPT_HANDLER(void *arg) {
 
 
 int main() {
-    TransmitterConfigStructure transmitterConfigStructure = CreateTransmitter("127.0.0.1");
-    InitiateConstellation(RECEIVER_INTERRUPT_HANDLER);
+    TransmitterConfigStructure transmitterConfigStructure = CreateTransmitter("127.0.0.1", 47474);
+    InitiateConstellation(RECEIVER_INTERRUPT_HANDLER, 47474);
     SleepForMs(2000);
 
     while (1) {

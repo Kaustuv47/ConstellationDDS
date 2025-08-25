@@ -43,7 +43,7 @@ typedef pthread_t THREAD;
 #else
 #endif
 
-#define RECEIVER_PORT 47474
+// #define RECEIVER_PORT 47474
 #define TRANSMITTER_PORT 47474
 #define MAX_ACTIVE_RECEIVER_THREAD 100
 
@@ -51,6 +51,8 @@ typedef struct {
     THREAD receiverThread;
     int activeReceivingThreads;
     volatile bool receiverThreadStatusActive;
+    RECEIVER_INTERRUPT_FUNCTION ReceiverInterruptFunction;
+    int port;
 } ReceiverConfigStructure;
 
 ReceiverConfigStructure receiverConfigStructure;
@@ -63,8 +65,6 @@ unsigned __stdcall Receiver(void *arg) {
 #else
 void *Receiver(void *arg) {
 #endif
-    RECEIVER_INTERRUPT_FUNCTION ReceiverInterruptFunction = (RECEIVER_INTERRUPT_FUNCTION) arg;
-
     Status status;
 
     socket_t receiverSocket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -73,7 +73,7 @@ void *Receiver(void *arg) {
     } else {
         struct sockaddr_in receiverIPAddress = {0};
         receiverIPAddress.sin_family = AF_INET;
-        receiverIPAddress.sin_port = htons(RECEIVER_PORT);
+        receiverIPAddress.sin_port = htons(receiverConfigStructure.port);
         receiverIPAddress.sin_addr.s_addr = INADDR_ANY;
 
         if (bind(receiverSocket, (struct sockaddr *) &receiverIPAddress, sizeof(receiverIPAddress)) == SOCKET_ERROR) {
@@ -110,7 +110,7 @@ void *Receiver(void *arg) {
                     pthread_attr_t attr;
                     pthread_attr_init(&attr);
                     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-                    pthread_create(&thread_id, &attr, ReceiverInterruptFunction, receivedDataStructure);
+                    pthread_create(&thread_id, &attr, receiverConfigStructure.ReceiverInterruptFunction, receivedDataStructure);
                     pthread_attr_destroy(&attr);
 #endif
                     receiverConfigStructure.activeReceivingThreads--;
@@ -134,15 +134,17 @@ void *Receiver(void *arg) {
     return 0;
 }
 
-void InitiateConstellation(RECEIVER_INTERRUPT_FUNCTION ReceiverInterruptFunction) {
+void InitiateConstellation(RECEIVER_INTERRUPT_FUNCTION ReceiverInterruptFunction, int port) {
     receiverConfigStructure.activeReceivingThreads = MAX_ACTIVE_RECEIVER_THREAD;
+    receiverConfigStructure.ReceiverInterruptFunction = ReceiverInterruptFunction;
+    receiverConfigStructure.port = port;
 #ifdef _WIN32
     receiverConfigStructure.receiverThread = (HANDLE) _beginthreadex(
         nullptr, 0, Receiver, (void *) ReceiverInterruptFunction, 0, nullptr);
     if (receiverConfigStructure.receiverThread) CloseHandle(receiverConfigStructure.receiverThread);
 #else
     int pthreadStatus = pthread_create(&receiverConfigStructure.receiverThread, NULL, Receiver,
-                                       (void *) ReceiverInterruptFunction);
+                                       NULL);
     if (pthreadStatus != 0) {
         receiverConfigStructure.receiverThread = 0; // or some invalid value to indicate failure
     }
@@ -162,7 +164,7 @@ unsigned EXIT_RECEIVER_INTERRUPT(ReceivedDataStructure *receivedDataStructure) {
 #endif
 }
 
-TransmitterConfigStructure CreateTransmitter(const char *ipAddressPointer) {
+TransmitterConfigStructure CreateTransmitter(const char *ipAddressPointer, int port) {
     static int wsaStarted = 0;
 #ifdef _WIN32
     if (!wsaStarted) {
@@ -177,6 +179,7 @@ TransmitterConfigStructure CreateTransmitter(const char *ipAddressPointer) {
 
 #endif
     TransmitterConfigStructure transmitterConfigStructure;
+    transmitterConfigStructure.port = port;
     transmitterConfigStructure.ipAddressPointer = ipAddressPointer;
     transmitterConfigStructure.port = TRANSMITTER_PORT;
     transmitterConfigStructure.transmitterSocket = INVALID_TRANSMITTER_SOCKET;
