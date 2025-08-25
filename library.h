@@ -76,26 +76,15 @@ typedef void *(*RECEIVER_INTERRUPT_FUNCTION)(void *);
 typedef struct {
     struct sockaddr_in clientIPAddress; /**< IP address of the client who sent the data */
     int clientIPAddressLength; /**< Length of the client IP address structure */
-    int receivedDataLength; /**< Number of bytes received in this message */
+    ssize_t receivedDataLength; /**< Number of bytes received in this message */
     char dataBuffer[MAX_BUFFER_SIZE]; /**< Buffer containing the received data */
 } ReceivedDataStructure;
-
-
-/**
- * @struct TransmitterConfigStructure
- * @brief Configuration and socket info for sending UDP messages.
- */
-typedef struct {
-    const char *ipAddressPointer; /**< Destination IP address as a string */
-    int port; /**< Destination port number */
-    socket_t transmitterSocket; /**< UDP socket used for transmission */
-    struct sockaddr_in destinationAddress; /**< Cached destination address struct */
-} TransmitterConfigStructure;
 
 /**
  * @brief Starts the UDP listener thread.
  *
  * @param ReceiverInterruptFunction Callback function invoked for each received UDP message.
+ * @param port Destination port as an integer.
  */
 void InitiateConstellation(RECEIVER_INTERRUPT_FUNCTION ReceiverInterruptFunction, int port);
 
@@ -103,19 +92,20 @@ void InitiateConstellation(RECEIVER_INTERRUPT_FUNCTION ReceiverInterruptFunction
  * @brief Creates and configures a UDP transmitter.
  *
  * @param ipAddressPointer Destination IP address as a null-terminated string.
+ * @param port Destination port as an integer.
  * @return TransmitterConfigStructure Configured transmitter structure.
  */
-TransmitterConfigStructure CreateTransmitter(const char *ipAddressPointer, int port);
+int CreateTransmitter(const char *ipAddressPointer, int port);
 
 /**
  * @brief Sends raw data to the configured destination IP and port.
  *
- * @param transmitterConfigStructure Pointer to a configured transmitter structure.
+ * @param transmitterID Transmitter Identifier.
  * @param dataBufferPointer Pointer to the raw data buffer to send.
  * @param dataBufferLength Length of the data buffer in bytes.
  * @return Status Returns SUCCESS on success or a specific error code on failure.
  */
-Status Transmitter(TransmitterConfigStructure *transmitterConfigStructure, const char *dataBufferPointer, int dataBufferLength);
+Status Transmitter(int transmitterID, const char *dataBufferPointer, int dataBufferLength);
 
 /**
  * @brief Cleans up resources used by a receiver thread after processing.
@@ -128,9 +118,9 @@ unsigned EXIT_RECEIVER_INTERRUPT(ReceivedDataStructure *receivedDataStructure);
 /**
  * @brief Destroys and cleans up the transmitter socket.
  *
- * @param transmitterConfigStructure Pointer to transmitter structure to destroy.
+ * @param transmitterID Transmitter Identifier.
  */
-void DestroyTransmitter(TransmitterConfigStructure *transmitterConfigStructure);
+void DestroyTransmitter(int transmitterID);
 
 
 /**
