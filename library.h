@@ -3,19 +3,75 @@
 
 #define MAX_BUFFER_SIZE 65535
 
+typedef int TransmitterID;
+
 typedef enum {
-    SUCCESS = 0,              /**< Operation completed successfully */
-    FAILURE = 1,              /**< Generic failure */
-    SOCKET_CREATE_ERROR = 2,  /**< Socket creation failed */
-    SOCKET_BIND_ERROR = 3,    /**< Socket bind failed */
-    WSA_STARTUP_ERROR = 4,    /**< Windows WSAStartup failed */
-    INVALID_IP_ERROR = 5,     /**< Invalid IP address string */
-    THREAD_CREATE_ERROR = 6,  /**< Thread creation failed */
-    MEMORY_ALLOC_ERROR = 7,   /**< Memory allocation failed */
-    SENDTO_ERROR = 8,         /**< sendto() function failed */
-    INVALID_SOCKET_ERROR = 9,
-    UNKNOWN_ERROR = 99        /**< Unknown error */
+    ACTIVE,
+    PASSIVE,
+    INACTIVE,
+    DESTROYED
+}State;
+
+typedef enum {
+    SUCCESS = 0,                  /**< Operation completed successfully */
+
+    /* Generic errors */
+    FAILURE,                      /**< Unspecified failure */
+    FAILURE_UNKNOWN,              /**< Unknown error */
+
+    /* Socket-related errors */
+    FAILURE_SOCKET_CREATE,        /**< socket() failed */
+    FAILURE_SOCKET_BIND,          /**< bind() failed */
+    FAILURE_SOCKET_CLOSE,         /**< close()/closesocket() failed */
+    FAILURE_SOCKET_INVALID,       /**< Invalid socket descriptor */
+    FAILURE_SOCKET_OPTION,        /**< setsockopt/getsockopt failed */
+    FAILURE_SOCKET_CONNECT,       /**< connect() failed */
+    FAILURE_SOCKET_LISTEN,        /**< listen() failed */
+    FAILURE_SOCKET_ACCEPT,        /**< accept() failed */
+    FAILURE_SOCKET_SEND,          /**< send() failed */
+    FAILURE_SOCKET_SENDTO,        /**< sendto() failed */
+    FAILURE_SOCKET_RECV,          /**< recv() failed */
+    FAILURE_SOCKET_RECVFROM,      /**< recvfrom() failed */
+
+    /* Address / IP errors */
+    FAILURE_INVALID_IP,           /**< Invalid IP address string */
+    FAILURE_INVALID_PORT,         /**< Invalid port number */
+    FAILURE_ADDR_RESOLVE,         /**< getaddrinfo/inet_pton failed */
+
+    /* Platform-specific errors */
+    FAILURE_WSA_STARTUP,          /**< Windows WSAStartup failed */
+    FAILURE_WSA_CLEANUP,          /**< Windows WSACleanup failed */
+
+    /* Threading / concurrency errors */
+    FAILURE_THREAD_CREATE,            /**< pthread_create() failed (generic) */
+    FAILURE_THREAD_CREATE_EAGAIN,     /**< Insufficient resources / process limit reached */
+    FAILURE_THREAD_CREATE_EINVAL,     /**< Invalid settings in attr */
+    FAILURE_THREAD_CREATE_EPERM,      /**< No permission to set scheduling parameters */
+    FAILURE_THREAD_JOIN,              /**< pthread_join() failed */
+    FAILURE_THREAD_DETACH,            /**< pthread_detach() failed */
+    FAILURE_THREAD_ATTR_INIT,         /**< pthread_attr_init failed */
+    FAILURE_THREAD_ATTR_SET,          /**< pthread_attr_set... failed */
+    FAILURE_MUTEX_INIT,               /**< pthread_mutex_init failed */
+    FAILURE_MUTEX_LOCK,               /**< pthread_mutex_lock failed */
+    FAILURE_MUTEX_UNLOCK,             /**< pthread_mutex_unlock failed */
+    FAILURE_CONDITION_INIT,           /**< pthread_cond_init failed */
+    FAILURE_CONDITION_WAIT,           /**< pthread_cond_wait failed */
+    FAILURE_CONDITION_SIGNAL,         /**< pthread_cond_signal failed */
+
+    /* Memory errors */
+    FAILURE_MEMORY_ALLOC,             /**< malloc/calloc failed */
+    FAILURE_MEMORY_FREE,              /**< free() failed (invalid pointer) */
+    FAILURE_BUFFER_OVERFLOW,          /**< Buffer overflow / too small */
+
+    /* Configuration / state errors */
+    FAILURE_INVALID_STATE,            /**< Invalid state (e.g., transmitter inactive) */
+    FAILURE_NOT_INITIALIZED,          /**< Module not initialized */
+    FAILURE_ALREADY_INITIALIZED,      /**< Module already initialized */
+    FAILURE_NULL_POINTER,             /**< Null pointer passed */
+    FAILURE_INDEX_OUT_OF_RANGE        /**< Array index out of range */
 } Status;
+
+Status receivingThreadStatus;
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -86,7 +142,7 @@ typedef struct {
  * @param ReceiverInterruptFunction Callback function invoked for each received UDP message.
  * @param port Destination port as an integer.
  */
-void InitiateConstellation(RECEIVER_INTERRUPT_FUNCTION ReceiverInterruptFunction, int port);
+Status InitiateConstellation(RECEIVER_INTERRUPT_FUNCTION ReceiverInterruptFunction, int port);
 
 /**
  * @brief Creates and configures a UDP transmitter.
@@ -95,7 +151,7 @@ void InitiateConstellation(RECEIVER_INTERRUPT_FUNCTION ReceiverInterruptFunction
  * @param port Destination port as an integer.
  * @return TransmitterConfigStructure Configured transmitter structure.
  */
-int CreateTransmitter(const char *ipAddressPointer, int port);
+TransmitterID CreateTransmitter(const char *ipAddressPointer, int port);
 
 /**
  * @brief Sends raw data to the configured destination IP and port.

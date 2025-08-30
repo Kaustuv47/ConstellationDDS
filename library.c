@@ -1,8 +1,9 @@
 #include "library.h"
 
 #include <stdio.h>
-#include <stdbool.h>
-
+#include <stdlib.h>
+#include <string.h>
+#include <sys/errno.h>
 
 #ifdef _WIN32
 #include <process.h>
@@ -17,16 +18,12 @@
 #define False FALSE
 
 #else
-
-#include <stdlib.h>
-#include <string.h>
 #include <unistd.h>
 #include <pthread.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/types.h>
-#include <unistd.h>
 
 #define CLOSE_SOCKET close
 #define INVALID_TRANSMITTER_SOCKET (-1)
@@ -49,25 +46,35 @@ typedef pthread_t THREAD;
 #define MAX_ACTIVE_RECEIVER_THREAD 100
 
 typedef struct {
-    THREAD receiverThread;
-    int activeReceivingThreads;
-    volatile bool receiverThreadStatusActive;
-    RECEIVER_INTERRUPT_FUNCTION ReceiverInterruptFunction;
-    int port;
-} ReceiverConfigStructure;
-ReceiverConfigStructure receiverConfigStructure;
+    socket_t udpSocket;
 
-/**
- * @struct TransmitterConfigStructure
- * @brief Configuration and socket info for sending UDP messages.
- */
-typedef struct {
-    const char *ipAddressPointer; /**< Destination IP address as a string */
-    int port; /**< Destination port number */
-    socket_t transmitterSocket; /**< UDP socket used for transmission */
-    struct sockaddr_in destinationAddress; /**< Cached destination address struct */
-} TransmitterConfigStructure;
-TransmitterConfigStructure transmitterConfigStructureArray[MAX_CLIENT_ALLOWED];
+    struct Receiver {
+        struct {
+            struct sockaddr_in socketIPAddress;
+            int port;
+        } config;
+
+        RECEIVER_INTERRUPT_FUNCTION ReceiverInterruptFunction;
+
+        struct {
+            THREAD thread;
+            int totalActiveThreads;
+            volatile bool listeningStatusActive;
+        } threading;
+    } receiver;
+
+    struct Transmitter {
+        struct {
+            const char *ipAddressPointer; /**< Destination IP address as a string */
+            int port; /**< Destination port number */
+            struct sockaddr_in socketIPAddress; /**< Cached destination address struct */
+        } config;
+
+        State state;
+    } transmitter[MAX_CLIENT_ALLOWED];
+} ConstellationStructure;
+
+ConstellationStructure constellationStructure = {0};
 
 #ifdef _WIN32
 unsigned __stdcall Receiver(void *arg) {
@@ -76,68 +83,65 @@ unsigned __stdcall Receiver(void *arg) {
 #else
 void *Receiver(void *arg) {
 #endif
-    Status status;
+    receivingThreadStatus = SUCCESS;
+    constellationStructure.receiver.config.socketIPAddress.sin_family = AF_INET;
+    constellationStructure.receiver.config.socketIPAddress.sin_port = htons(
+        constellationStructure.receiver.config.port);
+    constellationStructure.receiver.config.socketIPAddress.sin_addr.s_addr = INADDR_ANY;
 
-    socket_t receiverSocket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (receiverSocket == INVALID_TRANSMITTER_SOCKET) {
-        status = FAILURE;
+    if (bind(constellationStructure.udpSocket,
+             (struct sockaddr *) &constellationStructure.receiver.config.socketIPAddress,
+             sizeof(constellationStructure.receiver.config.socketIPAddress)) == SOCKET_ERROR) {
+        receivingThreadStatus = FAILURE_SOCKET_BIND;
     } else {
-        struct sockaddr_in receiverIPAddress = {0};
-        receiverIPAddress.sin_family = AF_INET;
-        receiverIPAddress.sin_port = htons(receiverConfigStructure.port);
-        receiverIPAddress.sin_addr.s_addr = INADDR_ANY;
+        constellationStructure.receiver.threading.listeningStatusActive = true;
 
-        if (bind(receiverSocket, (struct sockaddr *) &receiverIPAddress, sizeof(receiverIPAddress)) == SOCKET_ERROR) {
-            status = FAILURE;
-        } else {
-            receiverConfigStructure.receiverThreadStatusActive = true;
+        while (constellationStructure.receiver.threading.listeningStatusActive) {
+            ReceivedDataStructure *receivedDataStructure = malloc(sizeof(ReceivedDataStructure));
+            if (!receivedDataStructure) continue;
 
-            while (receiverConfigStructure.receiverThreadStatusActive) {
-                ReceivedDataStructure *receivedDataStructure = malloc(sizeof(ReceivedDataStructure));
-                if (!receivedDataStructure) continue;
+            receivedDataStructure->clientIPAddressLength = sizeof(receivedDataStructure->clientIPAddress);
 
-                receivedDataStructure->clientIPAddressLength = sizeof(receivedDataStructure->clientIPAddress);
+            // Peek to get client address without removing the message
+            receivedDataStructure->receivedDataLength = recvfrom(
+                constellationStructure.udpSocket,
+                receivedDataStructure->dataBuffer,
+                sizeof(receivedDataStructure->dataBuffer),
+                0, // -> Consider Zero if you want to remove packet from Socket
+                (struct sockaddr *) &receivedDataStructure->clientIPAddress,
+                (socklen_t *) &receivedDataStructure->clientIPAddressLength
+            );
 
-                // Peek to get client address without removing the message
-                receivedDataStructure->receivedDataLength = recvfrom(
-                    receiverSocket,
-                    receivedDataStructure->dataBuffer,
-                    sizeof(receivedDataStructure->dataBuffer),
-                    0, // -> Consider Zero if you want to remove packet from Socket
-                    (struct sockaddr *) &receivedDataStructure->clientIPAddress,
-                    (socklen_t *) &receivedDataStructure->clientIPAddressLength
-                );
-
-                if (receivedDataStructure->receivedDataLength <= 0) {
-                    free(receivedDataStructure);
-                    continue;
-                }
-
-                if (receiverConfigStructure.activeReceivingThreads > 0) {
-#ifdef _WIN32
-                    _beginthreadex(NULL, 0, ReceiverInterruptFunction, receivedDataStructure, 0, NULL);
-#else
-                    pthread_t thread_id;
-                    pthread_attr_t attr;
-                    pthread_attr_init(&attr);
-                    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-                    pthread_create(&thread_id, &attr, receiverConfigStructure.ReceiverInterruptFunction, receivedDataStructure);
-                    pthread_attr_destroy(&attr);
-#endif
-                    receiverConfigStructure.activeReceivingThreads--;
-                } else {
-                    free(receivedDataStructure);
-                }
-
-                // Wait a little to avoid re-spawning for same client
-                SleepForMs(100);
+            if (receivedDataStructure->receivedDataLength <= 0) {
+                free(receivedDataStructure);
+                continue;
             }
+
+            if (constellationStructure.receiver.threading.totalActiveThreads > 0) {
+#ifdef _WIN32
+                _beginthreadex(NULL, 0, ReceiverInterruptFunction, receivedDataStructure, 0, NULL);
+#else
+                pthread_t thread_id;
+                pthread_attr_t attr;
+                pthread_attr_init(&attr);
+                pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+                pthread_create(&thread_id, &attr, constellationStructure.receiver.ReceiverInterruptFunction,
+                               receivedDataStructure);
+                pthread_attr_destroy(&attr);
+#endif
+                constellationStructure.receiver.threading.totalActiveThreads--;
+            } else {
+                free(receivedDataStructure);
+            }
+
+            // Wait a little to avoid re-spawning for same client
+            SleepForMs(100);
         }
     }
 
-    if (receiverSocket != INVALID_TRANSMITTER_SOCKET) {
-        CLOSE_SOCKET(receiverSocket);
-        receiverSocket = INVALID_TRANSMITTER_SOCKET;
+    if (constellationStructure.udpSocket != INVALID_TRANSMITTER_SOCKET) {
+        CLOSE_SOCKET(constellationStructure.udpSocket);
+        constellationStructure.udpSocket = INVALID_TRANSMITTER_SOCKET;
     }
 #ifdef _WIN32
     WSACleanup();
@@ -145,29 +149,54 @@ void *Receiver(void *arg) {
     return NULL;
 }
 
-void InitiateConstellation(RECEIVER_INTERRUPT_FUNCTION ReceiverInterruptFunction, int port) {
-    receiverConfigStructure.activeReceivingThreads = MAX_ACTIVE_RECEIVER_THREAD;
-    receiverConfigStructure.ReceiverInterruptFunction = ReceiverInterruptFunction;
-    receiverConfigStructure.port = port;
-#ifdef _WIN32
-    receiverConfigStructure.receiverThread = (HANDLE) _beginthreadex(
-        NULL, 0, Receiver, (void *) ReceiverInterruptFunction, 0, NULL);
-    if (receiverConfigStructure.receiverThread) CloseHandle(receiverConfigStructure.receiverThread);
-#else
-    int pthreadStatus = pthread_create(&receiverConfigStructure.receiverThread, NULL, Receiver,
-                                       NULL);
-    if (pthreadStatus != 0) {
-        receiverConfigStructure.receiverThread = NULL; // or some invalid value to indicate failure
+Status InitiateConstellation(RECEIVER_INTERRUPT_FUNCTION ReceiverInterruptFunction, int port) {
+    Status status = SUCCESS;
+    // Set all Transmitters INACTIVE
+    for (int index = 0; index < MAX_CLIENT_ALLOWED; index++) {
+        constellationStructure.transmitter[index].state = INACTIVE;
     }
+    // Create UDP Socket
+    constellationStructure.udpSocket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (constellationStructure.udpSocket == INVALID_TRANSMITTER_SOCKET) {
+        status = FAILURE_SOCKET_INVALID;
+    } else {
+        constellationStructure.receiver.threading.totalActiveThreads = MAX_ACTIVE_RECEIVER_THREAD;
+        constellationStructure.receiver.ReceiverInterruptFunction = ReceiverInterruptFunction;
+        constellationStructure.receiver.config.port = port;
+
+        // Create Receiver Thread
+#ifdef _WIN32
+        constellationStructure.receiver.config.receiverThread = (HANDLE) _beginthreadex(
+            NULL, 0, Receiver, (void *) ReceiverInterruptFunction, 0, NULL);
+        if (constellationStructure.receiver.config.receiverThread)
+            CloseHandle(
+                constellationStructure.receiver.config.receiverThread);
+#else
+        int pthreadStatus = pthread_create(&constellationStructure.receiver.threading.thread, NULL, Receiver,
+                                           NULL);
+        if (pthreadStatus != 0) {
+            constellationStructure.receiver.threading.thread = NULL;
+            switch (pthreadStatus) {
+                case EAGAIN: status = FAILURE_THREAD_CREATE_EAGAIN;
+                    break;
+                case EINVAL: status = FAILURE_THREAD_CREATE_EINVAL;
+                    break;
+                case EPERM: status = FAILURE_THREAD_CREATE_EPERM;
+                    break;
+                default: status = FAILURE_THREAD_CREATE;
+            }
+        }
 #endif
-    SleepForMs(500);
+        SleepForMs(500);
+    }
+    return status;
 }
 
 unsigned EXIT_RECEIVER_INTERRUPT(ReceivedDataStructure *receivedDataStructure) {
     if (receivedDataStructure) {
         free(receivedDataStructure);
     }
-    receiverConfigStructure.activeReceivingThreads++;
+    constellationStructure.receiver.threading.totalActiveThreads++;
 #ifdef _WIN32
     _endthreadex(0);
 #else
@@ -175,9 +204,10 @@ unsigned EXIT_RECEIVER_INTERRUPT(ReceivedDataStructure *receivedDataStructure) {
 #endif
 }
 
-int CreateTransmitter(const char *ipAddressPointer, int port) {
+TransmitterID CreateTransmitter(const char *ipAddressPointer, int port) {
     static int wsaStarted = 0;
     int transmitterID = -1;
+
 #ifdef _WIN32
     if (!wsaStarted) {
         WSADATA wsaData;
@@ -187,16 +217,15 @@ int CreateTransmitter(const char *ipAddressPointer, int port) {
             wsaStarted = 1;
         }
     }
-#else
-
 #endif
 
     for (int index = 0; index < MAX_CLIENT_ALLOWED; index++) {
-        if (memcmp(&transmitterConfigStructureArray[index], &(TransmitterConfigStructure){NULL}, sizeof(transmitterConfigStructureArray[index])) == 0) {
+        if (constellationStructure.transmitter[index].state == INACTIVE) {
             transmitterID = index;
             break;
-        }
-        else if (strcmp(ipAddressPointer, transmitterConfigStructureArray[index].ipAddressPointer) == 0 && port == transmitterConfigStructureArray[index].port) {
+        } else if (0 == strcmp(ipAddressPointer, (const char *) &constellationStructure.transmitter[index].config.ipAddressPointer) &&
+                   port ==
+                   constellationStructure.transmitter[index].config.port) {
             // already present error
             break;
         }
@@ -205,73 +234,58 @@ int CreateTransmitter(const char *ipAddressPointer, int port) {
         return (-1);
     }
 
-    transmitterConfigStructureArray[transmitterID].port = port;
-    transmitterConfigStructureArray[transmitterID].ipAddressPointer = ipAddressPointer;
-    transmitterConfigStructureArray[transmitterID].transmitterSocket = INVALID_TRANSMITTER_SOCKET;
-    memset(&transmitterConfigStructureArray[transmitterID].destinationAddress, 0, sizeof(transmitterConfigStructureArray[transmitterID].destinationAddress));
+    constellationStructure.transmitter[transmitterID].config.port = port;
+    constellationStructure.transmitter[transmitterID].config.ipAddressPointer = ipAddressPointer;
+    memset(&constellationStructure.transmitter[transmitterID].config.socketIPAddress, 0,
+           sizeof(constellationStructure.transmitter[transmitterID].config.socketIPAddress));
 
-    transmitterConfigStructureArray[transmitterID].transmitterSocket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (transmitterConfigStructureArray[transmitterID].transmitterSocket == INVALID_TRANSMITTER_SOCKET) {
-        fprintf(stderr, "[CreateTransmitter] Socket creation failed\n");
-        // error case
-        return transmitterID;
-    }
-
-    transmitterConfigStructureArray[transmitterID].destinationAddress.sin_family = AF_INET;
-    transmitterConfigStructureArray[transmitterID].destinationAddress.sin_port = htons(transmitterConfigStructureArray[transmitterID].port);
-    if (inet_pton(AF_INET, transmitterConfigStructureArray[transmitterID].ipAddressPointer,
-                  &transmitterConfigStructureArray[transmitterID].destinationAddress.sin_addr) != 1) {
-        fprintf(stderr, "[CreateTransmitter] Invalid IP address: %s\n", transmitterConfigStructureArray[transmitterID].ipAddressPointer);
-        CLOSE_SOCKET(transmitterConfigStructureArray[transmitterID].transmitterSocket);
-        transmitterConfigStructureArray[transmitterID].transmitterSocket = INVALID_TRANSMITTER_SOCKET;
-    }
+    constellationStructure.transmitter[transmitterID].config.socketIPAddress.sin_family = AF_INET;
+    constellationStructure.transmitter[transmitterID].config.socketIPAddress.sin_port = htons(
+        constellationStructure.transmitter[transmitterID].config.port);
     return transmitterID;
 }
 
 
 Status Transmitter(int transmitterID, const char *dataBufferPointer,
                    const int dataBufferLength) {
-    Status status;
-    if (transmitterConfigStructureArray[transmitterID].transmitterSocket == INVALID_TRANSMITTER_SOCKET) {
-        status = INVALID_SOCKET_ERROR;
+    Status status = SUCCESS;
+    if (constellationStructure.udpSocket == INVALID_TRANSMITTER_SOCKET) {
+        status = FAILURE_SOCKET_INVALID;
     }
 
     int result = sendto(
-        transmitterConfigStructureArray[transmitterID].transmitterSocket,
+        constellationStructure.udpSocket,
         dataBufferPointer,
         dataBufferLength,
         0,
-        (struct sockaddr *) &transmitterConfigStructureArray[transmitterID].destinationAddress,
-        sizeof(transmitterConfigStructureArray[transmitterID].destinationAddress)
+        (struct sockaddr *) &constellationStructure.transmitter[transmitterID].config.socketIPAddress,
+        sizeof(constellationStructure.transmitter[transmitterID].config.socketIPAddress)
     );
 
     if (result == SOCKET_ERROR) {
-        status = SENDTO_ERROR;
-    } else {
-        status = SUCCESS;
+        status = FAILURE_SOCKET_SENDTO;
     }
-
     return status;
 }
 
 void DestroyTransmitter(int transmitterID) {
-    if (transmitterConfigStructureArray[transmitterID].transmitterSocket != INVALID_TRANSMITTER_SOCKET) {
-        CLOSE_SOCKET(transmitterConfigStructureArray[transmitterID].transmitterSocket);
-        transmitterConfigStructureArray[transmitterID].transmitterSocket = INVALID_TRANSMITTER_SOCKET;
-    }
+    // if (constellationStructure.transmitter[transmitterID].config.transmitterSocket != INVALID_TRANSMITTER_SOCKET) {
+    //     CLOSE_SOCKET(constellationStructure.transmitter[transmitterID].config.transmitterSocket);
+    //     constellationStructure.transmitter[transmitterID].config.transmitterSocket = INVALID_TRANSMITTER_SOCKET;
+    // }
 }
 
 
 void DeInitiateConstellation() {
     // Example: Set a global flag to request thread exit (you need to implement it)
-    receiverConfigStructure.receiverThreadStatusActive = False;
-    if (receiverConfigStructure.receiverThread) {
+    constellationStructure.receiver.threading.listeningStatusActive = False;
+    if (constellationStructure.receiver.threading.thread) {
 #ifdef _WIN32
-        WaitForSingleObject(receiverConfigStructure.receiverThread, INFINITE);
-        CloseHandle(receiverConfigStructure.receiverThread);
+        WaitForSingleObject(constellationStructure.receiver.config.receiverThread, INFINITE);
+        CloseHandle(constellationStructure.receiver.config.receiverThread);
 #else
-        pthread_join(receiverConfigStructure.receiverThread, NULL);
+        pthread_join(constellationStructure.receiver.threading.thread, NULL);
 #endif
-        receiverConfigStructure.receiverThread = NULL;
+        constellationStructure.receiver.threading.thread = NULL;
     }
 }

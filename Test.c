@@ -32,7 +32,6 @@ void *RECEIVER_INTERRUPT_HANDLER(void *arg) {
     printf("[From %s:%d] - %.*s\n", ip, port, receivedDataStructure->receivedDataLength,
            receivedDataStructure->dataBuffer);
     free(receivedDataStructure);
-    fflush(stdout);
     return NULL;
 }
 #endif
@@ -41,8 +40,9 @@ void *RECEIVER_INTERRUPT_HANDLER(void *arg) {
 
 
 int main() {
-    int transmitterID = CreateTransmitter("127.0.0.1", 47474);
     InitiateConstellation(RECEIVER_INTERRUPT_HANDLER, 47474);
+    TransmitterID transmitterID = CreateTransmitter("127.0.0.1", 47474);
+    printf("%i\n", transmitterID);
     SleepForMs(2000);
 
     while (1) {
