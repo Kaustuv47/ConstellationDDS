@@ -73,33 +73,6 @@ typedef enum {
 
 Status receivingThreadStatus;
 
-#ifdef _WIN32
-#include <winsock2.h>
-
-/**
- * @typedef socket_t
- * @brief Socket type alias for Windows platform.
- */
-typedef SOCKET socket_t;
-
-/**
- * @typedef _RECEIVER_INTERRUPT_FUNCTION
- * @brief Function pointer type for receiver interrupt callback (Windows).
- *
- * The callback function takes a pointer to received data and returns a thread exit code.
- * @return unsigned Thread exit code.
- */
-typedef unsigned __stdcall (*RECEIVER_INTERRUPT_FUNCTION)(void *);
-
-
-/**
- * @def SleepForMs
- * @brief Sleep for specified milliseconds (Windows).
- */
-#define SleepForMs(x) Sleep(x)
-
-#else
-
 #include <netinet/in.h>
 
 /**
@@ -123,7 +96,6 @@ typedef void *(*RECEIVER_INTERRUPT_FUNCTION)(void *);
  */
 #define SleepForMs(x) usleep((x)*1000)
 
-#endif
 
 /**
  * @struct ReceivedDataStructure
@@ -140,9 +112,9 @@ typedef struct {
  * @brief Starts the UDP listener thread.
  *
  * @param ReceiverInterruptFunction Callback function invoked for each received UDP message.
- * @param port Destination port as an integer.
+ * @param receiverPort Destination port as an integer.
  */
-Status InitiateConstellation(RECEIVER_INTERRUPT_FUNCTION ReceiverInterruptFunction, int port);
+Status InitiateConstellation(RECEIVER_INTERRUPT_FUNCTION ReceiverInterruptFunction, int receiverPort);
 
 /**
  * @brief Creates and configures a UDP transmitter.

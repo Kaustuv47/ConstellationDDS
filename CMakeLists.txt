@@ -4,7 +4,8 @@ project(ConstellationDDS C)
 set(CMAKE_C_STANDARD 23)
 
 add_library(ConstellationDDS STATIC library.c
-        library.h)
+        library.h
+)
 
 add_executable(Test Test.c)
 
