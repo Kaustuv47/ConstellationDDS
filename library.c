@@ -20,205 +20,116 @@
 #define True true
 #define False false
 
-typedef pthread_t THREAD;
-
-// #define RECEIVER_PORT 47474
-// #define TRANSMITTER_PORT 47474
 #define MAX_CLIENT_ALLOWED 100
 #define MAX_ACTIVE_RECEIVER_THREAD 100
+
+typedef int socket_t;
 
 typedef struct {
     socket_t udpSocket;
 
-    struct sockaddr_in receiverSocketAddress;
-    struct sockaddr_in transmitterSocketAddress[MAX_CLIENT_ALLOWED];
+    struct sockaddr_in subscriberSocketAddress;
+    struct sockaddr_in publisherSocketAddress;
 
-    RECEIVER_INTERRUPT_FUNCTION ReceiverInterruptFunction;
+    Status status;
 
-    struct Receiver {
-        struct {
-            THREAD thread;
-            int totalActiveThreads;
-            volatile bool listeningStatusActive;
-        } threading;
-    } receiver;
-} ConstellationStructure;
+    struct timespec delay;
+} PubSubStructure;
 
-static ConstellationStructure constellationStructure = {0};
+static PubSubStructure pubSubStructure = {0};
 
-void *Receiver(void *arg) {
-    receivingThreadStatus = SUCCESS;
+Status *Subscribe(void *pubSubInstancePointer, const char *targetIPAddressString, const int pubSubPort,
+                  const unsigned int *dataBufferPointer, const unsigned int dataBufferLength, const long updateDelay) {
+    pubSubStructure.status = SUCCESS;
+    pubSubStructure.delay.tv_nsec = updateDelay;
+    pubSubStructure.delay.tv_sec = 0;
 
-    if (bind(constellationStructure.udpSocket,
-             (struct sockaddr *) &constellationStructure.receiverSocketAddress,
-             sizeof(constellationStructure.receiverSocketAddress)) == SOCKET_ERROR) {
-        receivingThreadStatus = FAILURE_SOCKET_BIND;
+    memset(&pubSubStructure.subscriberSocketAddress, 0, sizeof(struct sockaddr_in));
+
+    pubSubStructure.subscriberSocketAddress.sin_family = AF_INET;
+    pubSubStructure.subscriberSocketAddress.sin_port = htons(pubSubPort);
+    pubSubStructure.subscriberSocketAddress.sin_addr.s_addr = inet_addr(targetIPAddressString);
+
+    pubSubStructure.udpSocket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (pubSubStructure.udpSocket == INVALID_TRANSMITTER_SOCKET) {
+        pubSubStructure.status = FAILURE_SOCKET_INVALID;
     } else {
-        constellationStructure.receiver.threading.listeningStatusActive = true;
+        if (bind(pubSubStructure.udpSocket,
+                 (struct sockaddr *) &pubSubStructure.subscriberSocketAddress,
+                 sizeof(pubSubStructure.subscriberSocketAddress)) == SOCKET_ERROR) {
+            pubSubStructure.status = FAILURE_SOCKET_BIND;
+        } else {
+            unsigned int tempDataBuffer[65535];
 
-        while (constellationStructure.receiver.threading.listeningStatusActive) {
-            ReceivedDataStructure *receivedDataStructure = malloc(sizeof(ReceivedDataStructure));
-            if (!receivedDataStructure) continue;
+            struct sockaddr_in clientIPAddress;
+            socklen_t clientIPAddressLength = sizeof(clientIPAddress);
 
-            receivedDataStructure->clientIPAddressLength = sizeof(receivedDataStructure->clientIPAddress);
+            while (pubSubStructure.status) {
+                // Peek to get client address without removing the message
+                unsigned long int tempDataBufferLength = recvfrom(
+                    pubSubStructure.udpSocket,
+                    tempDataBuffer,
+                    sizeof(tempDataBuffer),
+                    0, // -> Consider Zero if you want to remove packet from Socket
+                    (struct sockaddr *) &clientIPAddress,
+                    (socklen_t *) &clientIPAddressLength
+                );
 
-            // Peek to get client address without removing the message
-            receivedDataStructure->receivedDataLength = recvfrom(
-                constellationStructure.udpSocket,
-                receivedDataStructure->dataBuffer,
-                sizeof(receivedDataStructure->dataBuffer),
-                0, // -> Consider Zero if you want to remove packet from Socket
-                (struct sockaddr *) &receivedDataStructure->clientIPAddress,
-                (socklen_t *) &receivedDataStructure->clientIPAddressLength
+                if (tempDataBufferLength <= 0) {
+                    continue;
+                }
+            }
+        }
+    }
+
+    if (pubSubStructure.udpSocket != INVALID_TRANSMITTER_SOCKET) {
+        CLOSE_SOCKET(pubSubStructure.udpSocket);
+        pubSubStructure.udpSocket = INVALID_TRANSMITTER_SOCKET;
+    }
+    return &pubSubStructure.status;
+}
+
+Status *Publish(void *pubSubInstancePointer, const char *targetIPAddressString, const int pubSubPort,
+                const unsigned int *dataBufferPointer, const unsigned int dataBufferLength, const long updateDelay) {
+    pubSubStructure.status = SUCCESS;
+    pubSubStructure.delay.tv_nsec = updateDelay;
+    pubSubStructure.delay.tv_sec = 0;
+
+    memset(&pubSubStructure.publisherSocketAddress, 0, sizeof(struct sockaddr_in));
+
+    pubSubStructure.publisherSocketAddress.sin_family = AF_INET;
+    pubSubStructure.publisherSocketAddress.sin_port = htons(pubSubPort);
+    pubSubStructure.publisherSocketAddress.sin_addr.s_addr = inet_addr(targetIPAddressString);
+    pubSubStructure.udpSocket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+
+    if (pubSubStructure.udpSocket == INVALID_TRANSMITTER_SOCKET) {
+        pubSubStructure.status = FAILURE_SOCKET_INVALID;
+    } else {
+        pubSubInstancePointer = (PubSubStructure *) &pubSubStructure;
+        while (SUCCESS == pubSubStructure.status) {
+            long result = sendto(
+                pubSubStructure.udpSocket,
+                dataBufferPointer,
+                dataBufferLength,
+                0,
+                (struct sockaddr *) &pubSubStructure.publisherSocketAddress,
+                sizeof(pubSubStructure.publisherSocketAddress)
             );
 
-            if (receivedDataStructure->receivedDataLength <= 0) {
-                free(receivedDataStructure);
-                continue;
-            }
 
-            if (constellationStructure.receiver.threading.totalActiveThreads > 0) {
-
-                pthread_t thread_id;
-                pthread_attr_t attr;
-                pthread_attr_init(&attr);
-                pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-                pthread_create(&thread_id, &attr, constellationStructure.ReceiverInterruptFunction,
-                               receivedDataStructure);
-                pthread_attr_destroy(&attr);
-                constellationStructure.receiver.threading.totalActiveThreads--;
-            } else {
-                free(receivedDataStructure);
-            }
-
-            // Wait a little to avoid re-spawning for same client
-            SleepForMs(100);
-        }
-    }
-
-    if (constellationStructure.udpSocket != INVALID_TRANSMITTER_SOCKET) {
-        CLOSE_SOCKET(constellationStructure.udpSocket);
-        constellationStructure.udpSocket = INVALID_TRANSMITTER_SOCKET;
-    }
-    return NULL;
-}
-
-Status InitiateConstellation(RECEIVER_INTERRUPT_FUNCTION ReceiverInterruptFunction, int receiverPort) {
-    Status status = SUCCESS;
-
-    for (int transmitterIdentifier=0; transmitterIdentifier<MAX_CLIENT_ALLOWED; transmitterIdentifier++) {
-        memset(&constellationStructure.transmitterSocketAddress[transmitterIdentifier], 0, sizeof(struct sockaddr_in));
-    }
-
-    constellationStructure.receiverSocketAddress.sin_family = AF_INET;
-    constellationStructure.receiverSocketAddress.sin_port = htons(
-        receiverPort);
-    constellationStructure.receiverSocketAddress.sin_addr.s_addr = INADDR_ANY;
-
-    // Create UDP Socket
-    constellationStructure.udpSocket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (constellationStructure.udpSocket == INVALID_TRANSMITTER_SOCKET) {
-        status = FAILURE_SOCKET_INVALID;
-    } else {
-        constellationStructure.receiver.threading.totalActiveThreads = MAX_ACTIVE_RECEIVER_THREAD;
-        constellationStructure.ReceiverInterruptFunction = ReceiverInterruptFunction;
-
-        // Create Receiver Thread
-        int pthreadStatus = pthread_create(&constellationStructure.receiver.threading.thread, NULL, Receiver, NULL);
-        if (pthreadStatus != 0) {
-            constellationStructure.receiver.threading.thread = NULL;
-            switch (pthreadStatus) {
-                case EAGAIN: status = FAILURE_THREAD_CREATE_EAGAIN;
-                    break;
-                case EINVAL: status = FAILURE_THREAD_CREATE_EINVAL;
-                    break;
-                case EPERM: status = FAILURE_THREAD_CREATE_EPERM;
-                    break;
-                default: status = FAILURE_THREAD_CREATE;
-            }
-        }
-        SleepForMs(500);
-    }
-    return status;
-}
-
-unsigned EXIT_RECEIVER_INTERRUPT(ReceivedDataStructure *receivedDataStructure) {
-    if (receivedDataStructure) {
-        free(receivedDataStructure);
-    }
-    constellationStructure.receiver.threading.totalActiveThreads++;
-    pthread_exit(NULL);
-}
-
-TransmitterID CreateTransmitter(const char *ipAddressPointer, int port)
-{
-    TransmitterID transmitterID = -1;
-    uint32_t newIP;
-    inet_pton(AF_INET, ipAddressPointer, &newIP);
-
-    // Step 1: Check for duplicates
-    for (int transmitterIdentifier = 0; transmitterIdentifier < MAX_CLIENT_ALLOWED; transmitterIdentifier++) {
-        if (constellationStructure.transmitterSocketAddress[transmitterIdentifier].sin_family == AF_INET) {
-            if (constellationStructure.transmitterSocketAddress[transmitterIdentifier].sin_addr.s_addr == newIP) {
-                // Already exists
-                transmitterID = transmitterIdentifier;
+            if (result == SOCKET_ERROR) {
+                pubSubStructure.status = FAILURE_SOCKET_SENDTO;
             }
         }
     }
-
-    // Step 2: Find an empty slot
-    for (int transmitterIdentifier = 0; transmitterIdentifier < MAX_CLIENT_ALLOWED; transmitterIdentifier++) {
-        if (constellationStructure.transmitterSocketAddress[transmitterIdentifier].sin_family == 0) {
-            // Use this slot
-            memset(&constellationStructure.transmitterSocketAddress[transmitterIdentifier], 0,
-                   sizeof(struct sockaddr_in));
-
-            constellationStructure.transmitterSocketAddress[transmitterIdentifier].sin_family = AF_INET;
-            constellationStructure.transmitterSocketAddress[transmitterIdentifier].sin_port = htons(port);
-            constellationStructure.transmitterSocketAddress[transmitterIdentifier].sin_addr.s_addr = newIP;
-
-            transmitterID = transmitterIdentifier;  // SUCCESS
-        }
+    if (pubSubStructure.udpSocket != INVALID_TRANSMITTER_SOCKET) {
+        CLOSE_SOCKET(pubSubStructure.udpSocket);
+        pubSubStructure.udpSocket = INVALID_TRANSMITTER_SOCKET;
     }
-    return transmitterID;
+    return &pubSubStructure.status;
 }
 
-
-
-Status Transmitter(int transmitterID, const char *dataBufferPointer,
-                   const int dataBufferLength) {
-    Status status = SUCCESS;
-    if (constellationStructure.udpSocket == INVALID_TRANSMITTER_SOCKET) {
-        status = FAILURE_SOCKET_INVALID;
-    }
-
-    long result = sendto(
-        constellationStructure.udpSocket,
-        dataBufferPointer,
-        dataBufferLength,
-        0,
-        (struct sockaddr *) &constellationStructure.transmitterSocketAddress[transmitterID],
-        sizeof(constellationStructure.transmitterSocketAddress[transmitterID])
-    );
-
-    if (result == SOCKET_ERROR) {
-        status = FAILURE_SOCKET_SENDTO;
-    }
-    return status;
-}
-
-void DestroyTransmitter(int transmitterID) {
-    if (transmitterID >= 0 && transmitterID < MAX_CLIENT_ALLOWED) {
-        memset(&constellationStructure.transmitterSocketAddress[transmitterID], 0, sizeof(struct sockaddr_in));
-    }
-}
-
-
-void DeInitiateConstellation() {
-    // Example: Set a global flag to request thread exit (you need to implement it)
-    constellationStructure.receiver.threading.listeningStatusActive = False;
-    if (constellationStructure.receiver.threading.thread) {
-        pthread_join(constellationStructure.receiver.threading.thread, NULL);
-        constellationStructure.receiver.threading.thread = NULL;
-    }
+void UnPubSub(void *pubSubInstancePointer) {
+    PubSubStructure *pubSubStructurePointer = pubSubInstancePointer;
+    pubSubStructurePointer->status = KILL;
 }
