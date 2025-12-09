@@ -2,8 +2,10 @@
 #define CONSTELLATIONDDS_LIBRARY_H
 
 #define MAX_BUFFER_SIZE 65535
-#define MAX_PUBSUB_INSTANCES 500
+#define MAX_ALLOWED_PUBLISHER 100
+#define MAX_ALLOWED_SUBSCRIBER 100
 
+typedef int PubSubId;
 typedef enum {
     ACTIVE,
     PASSIVE,
@@ -72,50 +74,62 @@ typedef enum {
 } Status;
 
 /**
- * @brief Sends raw data to a target via UDP at a specified delay.
+ * @brief Initializes and starts a continuous UDP data publisher.
  *
- * This function handles the continuous transmission of data using a pre-configured UDP socket.
- * It packages the provided data and sends it to the specified IP address and port,
- * pausing between transmissions according to the update delay.
+ * This function sets up a UDP socket and begins a recurring task (e.g., a thread)
+ * to continuously transmit the provided raw data buffer to the specified target
+ * IP and port. The data to be sent must remain valid and unchanged for the entire
+ * duration the publisher is active.
  *
- * @param pubSubInstancePointer A pointer to the PubSub instance's internal structure.
- * @param targetIPAddressString The destination IP address (publisher target) as a null-terminated string.
- * @param pubSubPort The destination UDP port number.
- * @param dataBufferPointer A pointer to the raw data buffer (data payload) to be transmitted.
- * @param dataBufferLength The length of the data buffer in bytes.
- * @param updateDelay The delay between successive transmissions (e.g., in nanoseconds or milliseconds).
- * @return Status* Returns a pointer to the internal status variable (SUCCESS on success or a specific error code on failure).
+ * @param[out] status Pointer to an output variable that receives the operation's status code (SUCCESS or error).
+ * @param[in] targetIPAddressString The destination IP address (e.g., "192.168.1.100") as a null-terminated string.
+ * @param[in] pubSubPort The destination UDP port number (e.g., 5000).
+ * @param[in] dataBufferPointer A pointer to the raw data buffer (payload) to be transmitted.
+ * @param[in] dataBufferLength The length of the data buffer in bytes.
+ * @param[in] updateDelay The pause time between successive transmissions (e.g., in milliseconds or microseconds).
+ * @return PubSubId A unique identifier (handle) for the running publisher instance. A negative or specific value indicates initialization failure.
  */
-Status *Publish(void *pubSubInstancePointer, const char *targetIPAddressString, int pubSubPort,
-                const unsigned int *dataBufferPointer, unsigned int dataBufferLength, long updateDelay);
+PubSubId InitPublisher(Status *status, const char *targetIPAddressString, int pubSubPort,
+                       const unsigned char *dataBufferPointer, const unsigned int *dataBufferLength,
+                       long updateDelay);
 
 /**
- * @brief Subscribes to a publisher's data stream via UDP.
+ * @brief Initializes and starts a continuous UDP data stream subscriber.
  *
- * This function sets up a UDP socket to bind to the specified port and
- * IP address, then enters a loop to continuously listen for incoming
- * data packets from a publisher.
+ * This function sets up a UDP socket to bind to the specified local IP and port,
+ * and enters a continuous listening mode (e.g., a thread) to receive incoming
+ * data packets from a publisher. Received data is typically copied to an internal
+ * or user-provided buffer.
  *
- * @param pubSubInstancePointer A pointer to the PubSub structure instance (e.g., for state management).
- * @param targetIPAddressString The IP address string (e.g., "192.168.1.10") to bind the subscriber socket to.
- * @param pubSubPort The UDP port number to listen on.
- * @param dataBufferPointer A pointer to the buffer where received data could potentially be copied (Note: this parameter seems unused in typical subscriber loops).
- * @param dataBufferLength The expected maximum length of the data buffer.
- * @param updateDelay The delay (in a context-specific unit, often ms or ns) used for socket configuration or loop control.
- * @return Status* Returns a pointer to the internal status variable (SUCCESS or a specific error code like FAILURE_SOCKET_BIND).
+ * @param[out] status Pointer to an output variable that receives the operation's status code (SUCCESS or error).
+ * @param[in] targetIPAddressString The local IP address (e.g., "0.0.0.0" for all interfaces) to bind the socket to.
+ * @param[in] pubSubPort The UDP port number to listen on.
+ * @param[out] dataBufferPointer A pointer to the buffer where received data will be copied for the user.
+ * @param[in] dataBufferLength The maximum capacity of the data buffer in bytes.
+ * @param[in] updateDelay This parameter's usage is context-specific; it may control the listening loop frequency or be unused.
+ * @return PubSubId A unique identifier (handle) for the running subscriber instance. A negative or specific value indicates initialization failure.
  */
-Status *Subscribe(void *pubSubInstancePointer, const char *targetIPAddressString, int pubSubPort,
-                  const unsigned int *dataBufferPointer, unsigned int dataBufferLength, long updateDelay);
+PubSubId InitSubscriber(Status *status, const char *targetIPAddressString, int pubSubPort,
+                        const unsigned char *dataBufferPointer, const unsigned int *dataBufferLength,
+                        long updateDelay);
 
 /**
- * @brief Cleans up and releases resources associated with the PubSub instance.
+ * @brief Stops the publisher and cleans up associated resources.
  *
- * This function should be called when the publisher or subscriber is no longer needed.
- * It is responsible for closing the underlying UDP socket, freeing any allocated
- * memory for internal structures, and ensuring the PubSub instance is properly
- * shut down.
+ * This function halts the data transmission thread, closes the underlying UDP socket,
+ * and frees any internal memory allocated for the publisher instance identified by its ID.
  *
- * @param pubSubInstancePointer A pointer to the PubSub structure instance to be cleaned up.
+ * @param[in] publisherId The ID returned by InitPublisher.
  */
-void UnPubSub(void *pubSubInstancePointer);
+void UnPublish(PubSubId publisherId);
+
+/**
+ * @brief Stops the subscriber and cleans up associated resources.
+ *
+ * This function halts the continuous listening thread, closes the underlying UDP socket,
+ * and frees any internal memory allocated for the subscriber instance identified by its ID.
+ *
+ * @param[in] subscriberId The ID returned by InitSubscriber.
+ */
+void UnSubscribe(PubSubId subscriberId);
 #endif // CONSTELLATIONDDS_LIBRARY_H
